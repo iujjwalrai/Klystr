@@ -24,6 +24,13 @@ class ResourceConflict(KlystrError):
     reason = 'Conflict'
 
 
+class InvalidTransition(KlystrError):
+    """The requested change is not allowed from the object's current state."""
+
+    status_code = status.HTTP_409_CONFLICT
+    reason = 'InvalidTransition'
+
+
 class SchedulingError(KlystrError):
     """No node can satisfy a workload's requirements."""
 
