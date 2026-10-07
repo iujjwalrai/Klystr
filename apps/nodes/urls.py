@@ -1,6 +1,10 @@
+from rest_framework.routers import SimpleRouter
+
+from .views import NodeViewSet
 
 app_name = 'nodes'
 
-urlpatterns = [
-    # path('', views.<Resource>ListView.as_view(), name='<resource>-list'),
-]
+router = SimpleRouter()
+router.register('', NodeViewSet, basename='node')
+
+urlpatterns = router.urls

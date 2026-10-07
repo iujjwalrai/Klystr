@@ -17,7 +17,8 @@ def make_node(name='node-1', **overrides):
     return services.register_node(name=name, cpu_capacity=2000, memory_capacity=4 * 1024**3, **overrides)
 
 
-def age_heartbeat(node, by=services.STALE_THRESHOLD + timedelta(seconds=1)):
+def age_heartbeat(node, by=None):
+    by = by or services.stale_threshold() + timedelta(seconds=1)
     Node.objects.filter(pk=node.pk).update(last_heartbeat_at=timezone.now() - by)
 
 
@@ -144,7 +145,7 @@ class TestMarkStale:
         node = make_node()
         Node.objects.filter(pk=node.pk).update(
             last_heartbeat_at=None,
-            created_at=timezone.now() - services.STALE_THRESHOLD - timedelta(seconds=1),
+            created_at=timezone.now() - services.stale_threshold() - timedelta(seconds=1),
         )
 
         assert [n.name for n in services.mark_stale_nodes()] == [node.name]
@@ -155,3 +156,35 @@ class TestMarkStale:
         age_heartbeat(node)
 
         assert services.mark_stale_nodes() == []
+
+
+class TestUpdate:
+    def test_updates_labels_and_bumps_version(self):
+        node = make_node()
+        version = node.resource_version
+
+        services.update_node(node, labels={'zone': 'a'})
+
+        node.refresh_from_db()
+        assert node.labels == {'zone': 'a'}
+        assert node.resource_version == version + 1
+
+    def test_no_op_update_keeps_version(self):
+        node = make_node(labels={'zone': 'a'})
+        version = node.resource_version
+
+        services.update_node(node, labels={'zone': 'a'})
+
+        assert node.resource_version == version
+
+    def test_mismatched_resource_version_conflicts(self):
+        node = make_node()
+
+        with pytest.raises(ResourceConflict):
+            services.update_node(node, resource_version=node.resource_version + 1, labels={'x': 'y'})
+
+    def test_rejects_non_updatable_fields(self):
+        node = make_node()
+
+        with pytest.raises(InvalidSpec):
+            services.update_node(node, status=NodeStatus.READY)

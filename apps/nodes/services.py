@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import F, Q
 from django.utils import timezone
@@ -11,7 +12,9 @@ from common.exceptions import InvalidSpec, InvalidTransition, ResourceConflict
 from .models import Node
 from .state import NodeStatus
 
-STALE_THRESHOLD = timedelta(seconds=40)
+# Fields an operator may change on an existing node. Status and scheduling
+# state only change through the dedicated services below.
+UPDATABLE_FIELDS = frozenset({'labels', 'allocatable', 'cpu_capacity', 'memory_capacity'})
 
 # Statuses a node leaves when its heartbeats stop. Draining is left alone so an
 # in-progress drain is not forgotten; the drain logic owns that state.
@@ -45,6 +48,10 @@ def _save_versioned(node, **changes):
     return node
 
 
+def stale_threshold():
+    return timedelta(seconds=settings.KLYSTR['NODE_HEARTBEAT_TIMEOUT_SECONDS'])
+
+
 def _ready_status(node):
     """The status a node returns to once it is healthy again."""
     return NodeStatus.CORDONED if node.unschedulable else NodeStatus.READY
@@ -70,6 +77,31 @@ def register_node(*, name, cpu_capacity, memory_capacity, allocatable=None, labe
 
     node.save()
     return node
+
+
+def update_node(node, *, resource_version=None, **changes):
+    """
+    Change a node's labels, allocatable resources or capacity.
+
+    When `resource_version` is given it must match the stored one, so a client
+    that read an older copy gets a conflict instead of overwriting newer state.
+    """
+    unknown = set(changes) - UPDATABLE_FIELDS
+    if unknown:
+        raise InvalidSpec('These node fields cannot be updated.', fields=sorted(unknown))
+
+    if resource_version is not None and resource_version != node.resource_version:
+        raise ResourceConflict(
+            f'Node {node.name!r} has changed since resource_version {resource_version}.',
+            name=node.name,
+            resource_version=node.resource_version,
+        )
+
+    changes = {field: value for field, value in changes.items() if getattr(node, field) != value}
+    if not changes:
+        return node
+
+    return _save_versioned(node, **changes)
 
 
 def record_heartbeat(node):
@@ -121,7 +153,7 @@ def uncordon(node):
 
 def mark_stale_nodes():
     """Mark nodes NotReady when their agent has stopped heartbeating. Returns the nodes marked."""
-    cutoff = timezone.now() - STALE_THRESHOLD
+    cutoff = timezone.now() - stale_threshold()
     stale = Q(last_heartbeat_at__lt=cutoff) | Q(last_heartbeat_at__isnull=True, created_at__lt=cutoff)
 
     marked = []

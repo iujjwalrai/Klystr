@@ -2,8 +2,12 @@
 
 from django.core.management.base import BaseCommand, CommandError
 
+from workers.tasks.node_lifecycle import NodeLifecycleWorker
+
 # Populated as loops land in workers/tasks/.
-WORKERS = {}
+WORKERS = {
+    NodeLifecycleWorker.name: NodeLifecycleWorker,
+}
 
 
 class Command(BaseCommand):
@@ -13,7 +17,9 @@ class Command(BaseCommand):
         known = ', '.join(sorted(WORKERS)) or '(none registered yet)'
         parser.add_argument('name', help=f'One of: {known}')
         parser.add_argument(
-            '--interval', type=float, default=None,
+            '--interval',
+            type=float,
+            default=None,
             help='Override the loop interval, in seconds',
         )
 

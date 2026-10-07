@@ -25,6 +25,11 @@ def advisory_lock(name, blocking=True):
     Yields True when the lock was acquired. With blocking=False it yields
     False immediately if another session holds it.
     """
+    if connection.vendor != 'postgresql':
+        # SQLite dev setups run a single process, so there is nothing to coordinate.
+        yield True
+        return
+
     key = _lock_key(name)
     with connection.cursor() as cursor:
         if blocking:
